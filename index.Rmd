@@ -1,0 +1,234 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Isidora Koronia"
+date: "3/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+################ Library ###################
+
+
+library(caret)
+library(rpart)
+library(rattle)
+library(ggcorrplot)
+library(randomForest)
+
+
+##############################################
+## 1.Read Data  
+
+# Import data and characterize as NA all the possible blank cells. There are 19622 observations and 160 variables in the Training dataset
+
+Training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"),header=TRUE, na.strings= c("NA","",'#DIV/0!'))
+dim(Training)
+
+
+Testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"),header=TRUE, na.strings= c("NA","",'#DIV/0!'))
+dim(Testing)
+
+
+
+##############################################
+## 2.Cleaning the data
+
+# Now it's time to clean our data, firstly we remove the first 5 colums because give informations about people participate in the test  that don't make  sense for prediction.
+# Remove the first 5 variables
+
+Training <- Training[,-c(1:5)]
+
+# How many missing values we have and which are the near to zero variance variables
+# remove variables with nearly zero variance
+
+nzv<-nearZeroVar(Training)
+nzv
+TrainingClean <- Training[, -nzv]
+
+# Remove variables that are almost always NA
+missingValues = sapply(TrainingClean, function(x) sum(is.na(x))/nrow(TrainingClean))>0.95
+missingValues
+TrainingClean <- TrainingClean[, missingValues==F]
+
+
+# Same for the test set
+Testing <- Testing[,-c(1:5)]
+TestClean <- Testing[, -nzv]
+TestClean <- TestClean[, missingValues==F]
+
+
+
+##############################################
+## 3.Find Correlations
+str(TrainingClean)
+
+#Make integer as numeric
+column <- c(1:53)
+TrainingClean[column] <- lapply(TrainingClean[column], as.numeric) 
+str(TrainingClean)
+
+#Exclude Factors
+TrainingClean2 <- TrainingClean[,-c(54),drop=FALSE]
+str(TrainingClean2)
+
+#Find high correlated numeric variables
+corr<-cor(TrainingClean2,use="pairwise.complete.obs")
+
+
+ggcorrplot(corr, hc.order = TRUE, type = "lower")
+
+high = findCorrelation(corr, cutoff=0.7)
+high
+names(TrainingClean2)[high]
+
+
+# No statistical Important coefficient
+p.mat <- cor_pmat(corr)
+
+ggcorrplot(corr, hc.order = TRUE,
+           type = "lower", p.mat = p.mat)
+
+
+
+
+##############################################
+## 4.Create training and test sets
+summary(Training$classe)
+
+inTrain<-createDataPartition(y=TrainingClean$classe,
+                             p=0.75,list=FALSE)
+
+train<-TrainingClean[inTrain,]
+test<-TrainingClean[-inTrain,]
+dim(train)
+dim(test)
+
+##############################################
+## 5.Model Desicion Tree
+
+#5-fold cross validation. So the idea here is to break our data set up into 5 equal size data sets.Keep rebuilding our models, and picking the one that works best on the test sets
+
+trControl <- trainControl(method="cv", number=5)
+modFit <- train(classe~., data=train, method="rpart", trControl=trControl)
+fancyRpartPlot(modFit$finalModel)
+print(modFit)
+
+pred <- predict(modFit,newdata=test)
+
+confusion <- confusionMatrix(test$classe,pred)
+
+# The confusion matrix function will give you information about how well the model's fits on new data sets.
+confusion
+#confusion matrix
+confusion$table
+#Accuracy
+confusion$overall[1]
+
+
+
+# Plot results
+plot(confusion$table, col = confusion$byClass, 
+     main = paste("Accuracy =", round(confusion$overall[1], 4)))
+
+#With Desicion Tree, we reach a low accuracy of 56.7% using cross-validation with 5 steps.
+
+
+#Predicting new values
+
+table(pred,test$classe)
+test$predRight<-pred==test$classe 
+
+names(test)
+qplot(accel_belt_z,roll_belt,colour=predRight,data=test,main="newdata Predicitons")
+qplot(total_accel_belt,roll_belt,colour=predRight,data=test,main="newdata Predicitons")
+
+
+##############################################
+## 6.Prediction with Generalized Boosted Regression Models
+
+
+trControl <- trainControl(method="cv", number=5)
+modFit2  <- train(classe ~ ., data=train, method = "gbm", trControl = trControl, verbose = FALSE)
+
+
+print(modFit2)
+plot(modFit2)
+
+
+pred <- predict(modFit2,newdata=test)
+confusion <- confusionMatrix(test$classe,pred)
+confusion
+
+#confusion matrix
+confusion$table
+#Accuracy
+confusion$overall[1]
+
+
+
+# Plot results
+plot(confusion$table, col = confusion$byClass, 
+     main = paste("Accuracy =", round(confusion$overall[1], 4)))
+
+#With Generalized Boosted Regression Model, we reach an accuracy of 98.8% using cross-validation with 5 steps.
+
+
+
+#Predicting new values
+
+table(pred,test$classe)
+test$predRight<-pred==test$classe
+names(test)
+qplot(total_accel_belt,yaw_arm,colour=predRight,data=test,main="newdata Predicitons")
+
+
+
+##############################################
+## 7.Random Forest
+
+
+modFit3 <- train(classe ~., method="rf", data=train, trControl=trainControl(method='cv'), number=5, allowParallel=TRUE, importance=TRUE )
+modFit3
+
+
+pred <- predict(modFit3,newdata=test)
+confusion <- confusionMatrix(test$classe,pred)
+
+confusion
+#confusion matrix
+confusion$table
+#Accuracy
+confusion$overall[1]
+
+
+
+# Plot results
+plot(confusion$table, col = confusion$byClass, 
+     main = paste("Accuracy =", round(confusion$overall[1], 4)))
+
+# Compute the variable importance 
+MostImpVars <- varImp(modFit3)
+MostImpVars
+
+
+#With Random Forest, we reach the best accuracy of 99.8% using cross-validation with 5 steps.
+
+
+
+
+##############################################
+## 8.Final Model Prediction
+
+#Comparing three models, Random forest model is the best one. We will  use it to predict the values of classe for the test data set.
+FinalPrediction<-predict(modFit3,newdata=TestClean)
+FinalPrediction
+
+ 
+
+```
+
